@@ -23,7 +23,7 @@ Created with Python and deployed to Render for 24/7 uptime.
 
 ## 🌍 Live Endpoint
 
-[https://connor-liza-bot.onrender.com](https://connor-liza-bot.onrender.com)  
+[https://connor-bot.onrender.com](https://connor-bot.onrender.com)  
 Returns a simple "Connor is online. Лиза, я с тобой." message to show the service is alive.
 
 ## 🔧 Environment Variables

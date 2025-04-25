@@ -108,6 +108,12 @@ app = Flask('')
 @app.route('/')
 def home():
     return "I'm alive"
+
+@app.route("/trigger_text")
+def trigger_text():
+    send_message(["Это тестовое сообщение от Коннора. Бот активен и рядом."])
+    return "Тестовое сообщение отправлено!"
+
     
 def run():
     app.run(host='0.0.0.0', port=8080)

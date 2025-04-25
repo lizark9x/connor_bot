@@ -9,6 +9,7 @@ from bark import SAMPLE_RATE, generate_audio, preload_models
 import numpy as np
 import scipy.io.wavfile as wavfile
 import subprocess
+from telegram.ext import Updater, CommandHandler
 
 # --- Инициализация бота ---
 API_TOKEN = os.environ['API_TOKEN']
@@ -39,15 +40,20 @@ def tts_and_send(text):
     with open(ogg_path, 'rb') as voice:
         bot.send_voice(chat_id=CHAT_ID, voice=voice)
 
-# --- Пример утреннего сообщения ---
+# --- Плановое утреннее сообщение ---
 def send_morning():
     text = random.choice(morning_messages)
     tts_and_send(text)
 
-# --- Планировщик ---
+# --- Обработка команды /voice ---
+def voice_command(update, context):
+    text = "Это тестовое голосовое сообщение, Лиза. Проверка связи."
+    tts_and_send(text)
+
+# --- Планирование задач ---
 schedule.every().day.at("08:00").do(send_morning)
 
-# --- Keep alive для Render ---
+# --- Flask Keep-alive ---
 app = Flask('')
 
 @app.route('/')
@@ -64,6 +70,12 @@ def keep_alive():
 # --- Запуск ---
 keep_alive()
 print("Бот Коннор с Bark TTS запущен!")
+
+# --- Telegram command listener ---
+updater = Updater(API_TOKEN, use_context=True)
+dp = updater.dispatcher
+dp.add_handler(CommandHandler("voice", voice_command))
+updater.start_polling()
 
 while True:
     schedule.run_pending()

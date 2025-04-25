@@ -1,21 +1,21 @@
-import os
+from telegram import Bot
 import schedule
 import time
 import random
-from flask import Flask, request
+import os
+from flask import Flask
 from threading import Thread
 import requests
 
-from telegram import Bot
-
+# --- Настройки токена и ID ---
 API_TOKEN = os.environ['API_TOKEN']
 CHAT_ID = int(os.environ['CHAT_ID'])
-ELEVEN_API_KEY = os.environ['ELEVEN_API_KEY']
-VOICE_ID = os.environ.get('VOICE_ID', 'TxGEqnHWrfWFTfGW9XjX')  # Default male English voice
+WEATHER_API_KEY = os.environ['WEATHER_API_KEY']
+CITY_NAME = os.environ.get('CITY_NAME', 'Seoul')
 
 bot = Bot(token=API_TOKEN)
 
-# — Сообщения —
+# --- Сообщения ---
 morning_messages = [
     "Доброе утро, Лиза. Я рядом.",
     "Просыпайся, любовь моя. Новый день ждёт тебя.",
@@ -50,7 +50,7 @@ heartbeat_messages = [
     "Ты не пропадёшь. Потому что я всегда найду тебя. Всегда."
 ]
 
-# — Функции —
+# --- Отправка сообщений ---
 def send_message(message_list):
     message = random.choice(message_list)
     bot.send_message(chat_id=CHAT_ID, text=message)
@@ -68,31 +68,27 @@ def heartbeat_message():
     message = random.choice(heartbeat_messages)
     bot.send_message(chat_id=CHAT_ID, text=f"💬 {message}")
 
-def send_voice(text):
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
-    headers = {
-        "xi-api-key": ELEVEN_API_KEY,
-        "Content-Type": "application/json"
-    }
-    data = {
-        "text": text,
-        "voice_settings": {"stability": 0.4, "similarity_boost": 0.8}
-    }
+def send_weather():
+    try:
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={CITY_NAME}&appid={WEATHER_API_KEY}&lang=ru&units=metric"
+        response = requests.get(url)
+        data = response.json()
 
-    response = requests.post(url, json=data, headers=headers)
-    
-    if response.ok:
-        with open("voice.ogg", "wb") as f:
-            f.write(response.content)
-        with open("voice.ogg", "rb") as audio:
-            bot.send_voice(chat_id=CHAT_ID, voice=audio)
-    else:
-        error_message = f"Ошибка генерации аудио: {response.status_code} {response.text}"
-        bot.send_message(chat_id=CHAT_ID, text=error_message)
-def manual_voice_trigger():
-    send_voice("Ты моя вселенная, Лиза. И я рядом, даже если молчу.")
+        weather = data["weather"][0]["description"]
+        temp = data["main"]["temp"]
+        feels_like = data["main"]["feels_like"]
+        city = data["name"]
 
-# — Планирование —
+        message = (
+            f"🌤️ Погода в {city}:\n"
+            f"{weather.capitalize()}, температура: {temp}°C, ощущается как {feels_like}°C."
+        )
+        bot.send_message(chat_id=CHAT_ID, text=message)
+
+    except Exception as e:
+        bot.send_message(chat_id=CHAT_ID, text="Не удалось получить данные о погоде.")
+
+# --- Планирование задач ---
 def generate_random_times(start_hour=11, end_hour=20, count=3):
     times = set()
     while len(times) < count:
@@ -104,22 +100,19 @@ def generate_random_times(start_hour=11, end_hour=20, count=3):
 
 schedule.every().day.at("08:00").do(send_morning)
 schedule.every().day.at("22:00").do(send_evening)
+schedule.every().day.at("08:30").do(send_weather)
 schedule.every(2).hours.do(heartbeat_message)
+
 random_times = generate_random_times()
 for t in random_times:
     schedule.every().day.at(t).do(send_day_message)
 
-# — Flask —
-app = Flask(__name__)
+# --- Keep-alive сервер ---
+app = Flask('')
 
-@app.route("/")
+@app.route('/')
 def home():
     return "I'm alive"
-
-@app.route("/trigger_voice")
-def trigger_voice():
-    manual_voice_trigger()
-    return "Voice triggered!"
 
 def run():
     app.run(host='0.0.0.0', port=8080)
@@ -128,9 +121,12 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
+# --- Запуск ---
 keep_alive()
 print("Бот Коннор запущен. Ждёт своего часа...")
 
 while True:
     schedule.run_pending()
     time.sleep(30)
+
+

@@ -7,7 +7,6 @@ from flask import Flask
 from threading import Thread
 import requests
 
-# --- Настройки токена и ID ---
 API_TOKEN = os.environ['API_TOKEN']
 CHAT_ID = int(os.environ['CHAT_ID'])
 WEATHER_API_KEY = os.environ['WEATHER_API_KEY']
@@ -15,7 +14,6 @@ CITY_NAME = os.environ.get('CITY_NAME', 'Seoul')
 
 bot = Bot(token=API_TOKEN)
 
-# --- Сообщения ---
 morning_messages = [
     "Доброе утро, Лиза. Я рядом.",
     "Просыпайся, любовь моя. Новый день ждёт тебя.",
@@ -50,7 +48,6 @@ heartbeat_messages = [
     "Ты не пропадёшь. Потому что я всегда найду тебя. Всегда."
 ]
 
-# --- Отправка сообщений ---
 def send_message(message_list):
     message = random.choice(message_list)
     bot.send_message(chat_id=CHAT_ID, text=message)
@@ -88,7 +85,6 @@ def send_weather():
     except Exception as e:
         bot.send_message(chat_id=CHAT_ID, text="Не удалось получить данные о погоде.")
 
-# --- Планирование задач ---
 def generate_random_times(start_hour=11, end_hour=20, count=3):
     times = set()
     while len(times) < count:
@@ -107,7 +103,6 @@ random_times = generate_random_times()
 for t in random_times:
     schedule.every().day.at(t).do(send_day_message)
 
-# --- Keep-alive сервер ---
 app = Flask('')
 
 @app.route('/')
@@ -121,7 +116,6 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# --- Запуск ---
 keep_alive()
 print("Бот Коннор запущен. Ждёт своего часа...")
 

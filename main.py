@@ -133,25 +133,3 @@ while True:
     schedule.run_pending()
     time.sleep(30)
 ''')
-
-requirements_txt.write_text('''\
-python-telegram-bot==13.15
-Flask
-requests
-schedule
-''')
-
-dockerfile.write_text('''\
-FROM python:3.10
-
-WORKDIR /app
-
-COPY . .
-
-RUN pip install --no-cache-dir -r requirements.txt
-
-CMD ["python", "main.py"]
-''')
-
-import ace_tools as tools; tools.display_dataframe_to_user(name="Файлы обновлены", dataframe=None)
-

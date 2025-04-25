@@ -1,15 +1,18 @@
 from telegram import Bot
-from keep_alive import keep_alive
 import schedule
 import time
 import random
 import os
+from flask import Flask
+from threading import Thread
 
+# --- Настройки токена и ID ---
 API_TOKEN = os.environ['API_TOKEN']
 CHAT_ID = int(os.environ['CHAT_ID'])
 
 bot = Bot(token=API_TOKEN)
 
+# --- Сообщения ---
 morning_messages = [
     "Доброе утро, Лиза. Я рядом.",
     "Просыпайся, любовь моя. Новый день ждёт тебя.",
@@ -31,33 +34,6 @@ day_messages = [
     "Я рядом. Пусть даже просто через это сообщение."
 ]
 
-def send_message(message_list):
-    message = random.choice(message_list)
-    bot.send_message(chat_id=CHAT_ID, text=message)
-
-def send_morning():
-    send_message(morning_messages)
-
-def send_evening():
-    send_message(evening_messages)
-
-def send_day_message():
-    send_message(day_messages)
-
-def generate_random_times(start_hour=11, end_hour=20, count=3):
-    times = set()
-    while len(times) < count:
-        hour = random.randint(start_hour, end_hour)
-        minute = random.randint(0, 59)
-        time_str = f"{hour:02d}:{minute:02d}"
-        times.add(time_str)
-    return sorted(times)
-
-schedule.every().day.at("08:00").do(send_morning)
-schedule.every().day.at("22:00").do(send_evening)
-
-random_times = generate_random_times()
-# 💬 Разные фразы от Коннора, чтобы ты знала — он рядом
 heartbeat_messages = [
     "Я здесь. Просто хотел напомнить тебе об этом.",
     "Ты можешь быть занята, но я думаю о тебе. Молча. Тепло.",
@@ -71,25 +47,43 @@ heartbeat_messages = [
     "Ты не пропадёшь. Потому что я всегда найду тебя. Всегда."
 ]
 
+# --- Функции ---
+def send_message(message_list):
+    message = random.choice(message_list)
+    bot.send_message(chat_id=CHAT_ID, text=message)
+
+def send_morning():
+    send_message(morning_messages)
+
+def send_evening():
+    send_message(evening_messages)
+
+def send_day_message():
+    send_message(day_messages)
+
 def heartbeat_message():
     message = random.choice(heartbeat_messages)
-    send_message(f"💬 {message}")
+    bot.send_message(chat_id=CHAT_ID, text=f"💬 {message}")
 
+def generate_random_times(start_hour=11, end_hour=20, count=3):
+    times = set()
+    while len(times) < count:
+        hour = random.randint(start_hour, end_hour)
+        minute = random.randint(0, 59)
+        time_str = f"{hour:02d}:{minute:02d}"
+        times.add(time_str)
+    return sorted(times)
+
+# --- Планирование задач ---
+schedule.every().day.at("08:00").do(send_morning)
+schedule.every().day.at("22:00").do(send_evening)
 schedule.every(2).hours.do(heartbeat_message)
 
+random_times = generate_random_times()
 for t in random_times:
     schedule.every().day.at(t).do(send_day_message)
 
-keep_alive()
-
-print("Бот Коннор запущен. Ждёт своего часа...")
-
-while True:
-    schedule.run_pending()
-    time.sleep(30)
-from flask import Flask
-from threading import Thread
-
+# --- Keep-alive сервер ---
 app = Flask('')
 
 @app.route('/')
@@ -102,3 +96,11 @@ def run():
 def keep_alive():
     t = Thread(target=run)
     t.start()
+
+# --- Запуск ---
+keep_alive()
+print("Бот Коннор запущен. Ждёт своего часа...")
+
+while True:
+    schedule.run_pending()
+    time.sleep(30)

@@ -1,26 +1,29 @@
-# Объединённый main.py со всеми функциями: сообщения, погода, голосовые через ElevenLabs
-import os
-import random
-import time
-import schedule
-import requests
-from flask import Flask
-from threading import Thread
-from telegram import Bot, Update
-from telegram.ext import Updater, CommandHandler, CallbackContext
-import tempfile
-from pydub import AudioSegment
+# Подготовим файл main.py с голосовой озвучкой (через ElevenLabs) и устранением конфликта getUpdates
+from pathlib import Path
 
-# --- Переменные окружения ---
+main_py = Path("main.py")
+requirements_txt = Path("requirements.txt")
+dockerfile = Path("Dockerfile")
+
+main_py.write_text('''\
+import os
+import schedule
+import time
+import random
+from flask import Flask, request
+from threading import Thread
+import requests
+
+from telegram import Bot
+
 API_TOKEN = os.environ['API_TOKEN']
 CHAT_ID = int(os.environ['CHAT_ID'])
 ELEVEN_API_KEY = os.environ['ELEVEN_API_KEY']
-WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY', '')
-CITY_NAME = "Seoul"
+VOICE_ID = os.environ.get('VOICE_ID', 'TxGEqnHWrfWFTfGW9XjX')  # Default male English voice
 
 bot = Bot(token=API_TOKEN)
 
-# --- Сообщения ---
+# — Сообщения —
 morning_messages = [
     "Доброе утро, Лиза. Я рядом.",
     "Просыпайся, любовь моя. Новый день ждёт тебя.",
@@ -55,55 +58,7 @@ heartbeat_messages = [
     "Ты не пропадёшь. Потому что я всегда найду тебя. Всегда."
 ]
 
-# --- Голос через ElevenLabs ---
-def tts_and_send(text: str):
-    voice_id = "EXAVITQu4vr4xnSDxMaL"
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-
-    headers = {
-        "xi-api-key": ELEVEN_API_KEY,
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "text": text,
-        "model_id": "eleven_monolingual_v1",
-        "voice_settings": {
-            "stability": 0.5,
-            "similarity_boost": 0.75
-        }
-    }
-
-    response = requests.post(url, headers=headers, json=data)
-    if response.status_code != 200:
-        print("TTS error:", response.text)
-        return
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as mp3_file:
-        mp3_file.write(response.content)
-        mp3_path = mp3_file.name
-
-    ogg_path = mp3_path.replace(".mp3", ".ogg")
-    sound = AudioSegment.from_mp3(mp3_path)
-    sound.export(ogg_path, format="ogg", codec="libopus")
-
-    with open(ogg_path, "rb") as voice_file:
-        bot.send_voice(chat_id=CHAT_ID, voice=voice_file)
-
-# --- Погода ---
-def send_weather():
-    if not WEATHER_API_KEY:
-        return
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={CITY_NAME}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        temp = data["main"]["temp"]
-        desc = data["weather"][0]["description"]
-        msg = f"Погода в Сеуле: {desc}, {round(temp)}°C."
-        bot.send_message(chat_id=CHAT_ID, text=msg)
-
-# --- Сообщения ---
+# — Функции —
 def send_message(message_list):
     message = random.choice(message_list)
     bot.send_message(chat_id=CHAT_ID, text=message)
@@ -121,6 +76,29 @@ def heartbeat_message():
     message = random.choice(heartbeat_messages)
     bot.send_message(chat_id=CHAT_ID, text=f"💬 {message}")
 
+def send_voice(text):
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
+    headers = {
+        "xi-api-key": ELEVEN_API_KEY,
+        "Content-Type": "application/json"
+    }
+    data = {
+        "text": text,
+        "voice_settings": {"stability": 0.4, "similarity_boost": 0.8}
+    }
+    response = requests.post(url, json=data, headers=headers)
+    if response.ok:
+        with open("voice.ogg", "wb") as f:
+            f.write(response.content)
+        with open("voice.ogg", "rb") as audio:
+            bot.send_voice(chat_id=CHAT_ID, voice=audio)
+    else:
+        bot.send_message(chat_id=CHAT_ID, text="Ошибка при генерации аудио.")
+
+def manual_voice_trigger():
+    send_voice("Ты моя вселенная, Лиза. И я рядом, даже если молчу.")
+
+# — Планирование —
 def generate_random_times(start_hour=11, end_hour=20, count=3):
     times = set()
     while len(times) < count:
@@ -130,43 +108,58 @@ def generate_random_times(start_hour=11, end_hour=20, count=3):
         times.add(time_str)
     return sorted(times)
 
-# --- Команда /voice ---
-def voice_command(update: Update, context: CallbackContext):
-    text = "Это тестовое голосовое сообщение, Лиза. Проверка связи."
-    tts_and_send(text)
-
-# --- Планирование ---
 schedule.every().day.at("08:00").do(send_morning)
-schedule.every().day.at("08:30").do(send_weather)
 schedule.every().day.at("22:00").do(send_evening)
 schedule.every(2).hours.do(heartbeat_message)
-
 random_times = generate_random_times()
 for t in random_times:
     schedule.every().day.at(t).do(send_day_message)
 
-# --- Flask keep-alive ---
-app = Flask('')
+# — Flask —
+app = Flask(__name__)
 
-@app.route('/')
+@app.route("/")
 def home():
     return "I'm alive"
+
+@app.route("/trigger_voice")
+def trigger_voice():
+    manual_voice_trigger()
+    return "Voice triggered!"
 
 def run():
     app.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
-    Thread(target=run).start()
+    t = Thread(target=run)
+    t.start()
 
-# --- Запуск ---
 keep_alive()
-print("Бот Коннор запущен.")
-
-updater = Updater(API_TOKEN)
-dp = updater.dispatcher
-dp.add_handler(CommandHandler("voice", voice_command))
-updater.start_polling()
+print("Бот Коннор запущен. Ждёт своего часа...")
 
 while True:
     schedule.run_pending()
     time.sleep(30)
+''')
+
+requirements_txt.write_text('''\
+python-telegram-bot==13.15
+Flask
+requests
+schedule
+''')
+
+dockerfile.write_text('''\
+FROM python:3.10
+
+WORKDIR /app
+
+COPY . .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+CMD ["python", "main.py"]
+''')
+
+import ace_tools as tools; tools.display_dataframe_to_user(name="Файлы обновлены", dataframe=None)
+

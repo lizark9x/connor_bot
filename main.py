@@ -78,15 +78,17 @@ def send_voice(text):
         "text": text,
         "voice_settings": {"stability": 0.4, "similarity_boost": 0.8}
     }
+
     response = requests.post(url, json=data, headers=headers)
+    
     if response.ok:
         with open("voice.ogg", "wb") as f:
             f.write(response.content)
         with open("voice.ogg", "rb") as audio:
             bot.send_voice(chat_id=CHAT_ID, voice=audio)
     else:
-        bot.send_message(chat_id=CHAT_ID, text="Ошибка при генерации аудио.")
-
+        error_message = f"Ошибка генерации аудио: {response.status_code} {response.text}"
+        bot.send_message(chat_id=CHAT_ID, text=error_message)
 def manual_voice_trigger():
     send_voice("Ты моя вселенная, Лиза. И я рядом, даже если молчу.")
 

@@ -1,4 +1,7 @@
+bark
+ffmpeg-python
+numpy
+scipy
 flask
 schedule
-python-telegram-bot
-TTS==0.15.1
+python-telegram-bot==13.15

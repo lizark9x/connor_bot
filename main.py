@@ -91,6 +91,18 @@ def send_weather():
         bot.send_message(chat_id=CHAT_ID, text=message)
     except Exception as e:
         print(f"Ошибка при получении погоды: {e}")
+        from gtts import gTTS  # Озвучка текста
+import uuid  # Для создания уникальных имён файлов
+
+def send_voice_message(text):
+    tts = gTTS(text=text, lang='ru')
+    filename = f"{uuid.uuid4()}.mp3"
+    tts.save(filename)
+    
+    with open(filename, 'rb') as audio:
+        bot.send_audio(chat_id=CHAT_ID, audio=audio)
+    
+    os.remove(filename)
 
 # --- Планирование задач ---
 schedule.every().day.at("08:00").do(send_morning)
@@ -119,6 +131,7 @@ def keep_alive():
 # --- Запуск ---
 keep_alive()
 print("Бот Коннор запущен. Ждёт своего часа...")
+send_voice_message("Привет, Лиза. Я теперь говорю с тобой голосом. Надеюсь, ты улыбаешься.")
 
 while True:
     schedule.run_pending()

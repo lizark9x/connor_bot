@@ -108,10 +108,10 @@ app = Flask('')
 @app.route('/')
 def home():
     return "I'm alive"
-    @app.route("/trigger_text")
 
+@app.route('/trigger_text')
 def trigger_text():
-    send_message(["Это тестовое сообщение от Конора. Бот активен и рядом."])
+    send_message(["Это тестовое сообщение от Коннора. Бот активен и рядом."])
     return "Текстовое сообщение отправлено!"
 
 def run():

@@ -1,11 +1,3 @@
-# Подготовим файл main.py с голосовой озвучкой (через ElevenLabs) и устранением конфликта getUpdates
-from pathlib import Path
-
-main_py = Path("main.py")
-requirements_txt = Path("requirements.txt")
-dockerfile = Path("Dockerfile")
-
-main_py.write_text('''\
 import os
 import schedule
 import time

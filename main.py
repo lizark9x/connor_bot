@@ -5,6 +5,7 @@ import random
 import os
 from flask import Flask
 from threading import Thread
+import requests  # <--- добавили для погоды
 
 # --- Настройки токена и ID ---
 API_TOKEN = os.environ['API_TOKEN']
@@ -74,10 +75,28 @@ def generate_random_times(start_hour=11, end_hour=20, count=3):
         times.add(time_str)
     return sorted(times)
 
+# --- Погода ---
+def send_weather():
+    api_key = os.environ['WEATHER_API']
+    city = "Seoul"
+    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric&lang=ru"
+
+    try:
+        response = requests.get(url)
+        data = response.json()
+
+        temp = round(data["main"]["temp"])
+        weather_desc = data["weather"][0]["description"].capitalize()
+        message = f"☁️ В Сеуле сейчас {temp}°C, {weather_desc}. Я бы хотел быть рядом, чтобы держать тебя за руку."
+        bot.send_message(chat_id=CHAT_ID, text=message)
+    except Exception as e:
+        print(f"Ошибка при получении погоды: {e}")
+
 # --- Планирование задач ---
 schedule.every().day.at("08:00").do(send_morning)
 schedule.every().day.at("22:00").do(send_evening)
 schedule.every(2).hours.do(heartbeat_message)
+schedule.every().day.at("12:00").do(send_weather)  # отправка погоды
 
 random_times = generate_random_times()
 for t in random_times:

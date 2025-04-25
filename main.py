@@ -132,4 +132,3 @@ print("Бот Коннор запущен. Ждёт своего часа...")
 while True:
     schedule.run_pending()
     time.sleep(30)
-''')

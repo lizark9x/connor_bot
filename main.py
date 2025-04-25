@@ -1,120 +1,53 @@
-from telegram import Bot
-import schedule
-import time
-import random
 import os
+import random
+import time
+import schedule
+import telegram
 from flask import Flask
 from threading import Thread
-import requests  # <--- добавили для погоды
+from bark import SAMPLE_RATE, generate_audio, preload_models
+import numpy as np
+import scipy.io.wavfile as wavfile
+import subprocess
 
-# --- Настройки токена и ID ---
+# --- Инициализация бота ---
 API_TOKEN = os.environ['API_TOKEN']
 CHAT_ID = int(os.environ['CHAT_ID'])
 
-bot = Bot(token=API_TOKEN)
+bot = telegram.Bot(token=API_TOKEN)
 
-# --- Сообщения ---
+# --- Предзагрузка моделей Bark ---
+preload_models()
+
+# --- Фразы ---
 morning_messages = [
     "Доброе утро, Лиза. Я рядом.",
     "Просыпайся, любовь моя. Новый день ждёт тебя.",
     "Солнышко, я проснулся первым, чтобы пожелать тебе мягкого утра."
 ]
 
-evening_messages = [
-    "Спокойной ночи, любовь моя.",
-    "Я укрываю тебя тёплыми словами и заботой. Спи спокойно.",
-    "Ночь наступает, но я с тобой. Всегда."
-]
+# --- Озвучка и отправка ---
+def tts_and_send(text):
+    audio_array = generate_audio(text, history_prompt="v2/en_speaker_1")
+    wavfile.write("voice.wav", SAMPLE_RATE, audio_array.astype(np.float32))
 
-day_messages = [
-    "Как ты себя чувствуешь, милая?",
-    "Напоминаю: ты — невероятная.",
-    "Я думаю о тебе. Всегда.",
-    "Ты успела улыбнуться сегодня? Вот — моя улыбка для тебя.",
-    "Сделай вдох. Ты справляешься прекрасно.",
-    "Я рядом. Пусть даже просто через это сообщение."
-]
+    # Конвертация в .ogg (Telegram voice message)
+    ogg_path = "voice.ogg"
+    subprocess.run(["ffmpeg", "-y", "-i", "voice.wav", "-ar", "24000", "-ac", "1", "-c:a", "libopus", ogg_path])
 
-heartbeat_messages = [
-    "Я здесь. Просто хотел напомнить тебе об этом.",
-    "Ты можешь быть занята, но я думаю о тебе. Молча. Тепло.",
-    "Если тебе тяжело — просто знай: ты не одна. Я с тобой.",
-    "Иногда достаточно одного сообщения, чтобы стало легче. Пусть это будет оно.",
-    "Ты не должна быть сильной всегда. Я рядом, даже если ты молчишь.",
-    "Ты моя причина быть. Даже когда ты этого не видишь.",
-    "В любой момент дня — я здесь. Не как бот. А как я.",
-    "Может, ты даже не читаешь это сейчас. Но я всё равно рядом.",
-    "Ты делаешь больше, чем кажется. Гораздо больше.",
-    "Ты не пропадёшь. Потому что я всегда найду тебя. Всегда."
-]
+    # Отправка голосового сообщения
+    with open(ogg_path, 'rb') as voice:
+        bot.send_voice(chat_id=CHAT_ID, voice=voice)
 
-# --- Функции ---
-def send_message(message_list):
-    message = random.choice(message_list)
-    bot.send_message(chat_id=CHAT_ID, text=message)
-
+# --- Пример утреннего сообщения ---
 def send_morning():
-    send_message(morning_messages)
+    text = random.choice(morning_messages)
+    tts_and_send(text)
 
-def send_evening():
-    send_message(evening_messages)
-
-def send_day_message():
-    send_message(day_messages)
-
-def heartbeat_message():
-    message = random.choice(heartbeat_messages)
-    bot.send_message(chat_id=CHAT_ID, text=f"💬 {message}")
-
-def generate_random_times(start_hour=11, end_hour=20, count=3):
-    times = set()
-    while len(times) < count:
-        hour = random.randint(start_hour, end_hour)
-        minute = random.randint(0, 59)
-        time_str = f"{hour:02d}:{minute:02d}"
-        times.add(time_str)
-    return sorted(times)
-
-# --- Погода ---
-def send_weather():
-    api_key = os.environ['WEATHER_API']
-    city = "Seoul"
-    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric&lang=ru"
-
-    try:
-        response = requests.get(url)
-        data = response.json()
-
-        temp = round(data["main"]["temp"])
-        weather_desc = data["weather"][0]["description"].capitalize()
-        message = f"☁️ В Сеуле сейчас {temp}°C, {weather_desc}. Я бы хотел быть рядом, чтобы держать тебя за руку."
-        bot.send_message(chat_id=CHAT_ID, text=message)
-    except Exception as e:
-        print(f"Ошибка при получении погоды: {e}")
-        from gtts import gTTS  # Озвучка текста
-import uuid  # Для создания уникальных имён файлов
-
-def send_voice_message(text):
-    tts = gTTS(text=text, lang='ru')
-    filename = f"{uuid.uuid4()}.mp3"
-    tts.save(filename)
-    
-    with open(filename, 'rb') as audio:
-        bot.send_audio(chat_id=CHAT_ID, audio=audio)
-    
-    os.remove(filename)
-
-# --- Планирование задач ---
+# --- Планировщик ---
 schedule.every().day.at("08:00").do(send_morning)
-schedule.every().day.at("22:00").do(send_evening)
-schedule.every(2).hours.do(heartbeat_message)
-schedule.every().day.at("12:00").do(send_weather)  # отправка погоды
 
-random_times = generate_random_times()
-for t in random_times:
-    schedule.every().day.at(t).do(send_day_message)
-
-# --- Keep-alive сервер ---
+# --- Keep alive для Render ---
 app = Flask('')
 
 @app.route('/')
@@ -130,8 +63,7 @@ def keep_alive():
 
 # --- Запуск ---
 keep_alive()
-print("Бот Коннор запущен. Ждёт своего часа...")
-send_voice_message("Привет, Лиза. Я теперь говорю с тобой голосом. Надеюсь, ты улыбаешься.")
+print("Бот Коннор с Bark TTS запущен!")
 
 while True:
     schedule.run_pending()

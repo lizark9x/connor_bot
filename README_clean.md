@@ -1,7 +1,7 @@
 # Connor Telegram Bot
 
-A warm-hearted, cloud-based Telegram bot that sends daily messages of love, motivation, and support.  
-Created with Python and deployed to Render for 24/7 uptime.
+A custom Telegram bot designed to simulate emotional support and affection through scheduled and randomized text messages. 
+Originally envisioned as a voice-enhanced bot, this version focuses on clean, stable delivery of written messages via cloud deployment.
 
 ## 💙 Features
 
@@ -9,22 +9,24 @@ Created with Python and deployed to Render for 24/7 uptime.
 - Night messages at 22:00
 - 3 random positive messages during the day
 - Runs entirely in the cloud (Render)
-- Uses Flask to keep the bot alive
-- Fully environment-based configuration (no sensitive data in code)
+- Weather updates for a specific location
+- Manual trigger endpoint for testing or instant interaction
 
 ## 🧠 Stack
 
-- Python 3
+- Python 3.10
 - python-telegram-bot
 - schedule
 - Flask
-- Render.com
-- GitHub
+- Docker
+- Render.com (for deployment)
 
 ## 🌍 Live Endpoint
 
-[https://connor-bot.onrender.com](https://connor-bot.onrender.com)  
-Returns a simple "Коннор онлайн. Лиза, я с тобой." message to show the service is alive.
+[https://connor-bot-voiceover.onrender.com]
+
+Use / to verify server status.
+Use /trigger_message to manually trigger a message.
 
 ## 🔧 Environment Variables
 
@@ -36,6 +38,10 @@ Returns a simple "Коннор онлайн. Лиза, я с тобой." messag
 ## 🚀 How to Deploy
 
 1. Clone the repository  
-2. Create a `requirements.txt` file with dependencies  
-3. Add your environment variables  
-4. Run with `python main.py`
+2. Add your API_TOKEN and CHAT_ID in the environment settings of your hosting service.
+3. Ensure the following files exist:
+- main.py
+- requirements.txt
+- Dockerfile
+4. Deploy using Docker.
+Render will build and run your container.

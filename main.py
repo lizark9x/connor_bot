@@ -63,7 +63,7 @@ def send_day_message():
 
 def heartbeat_message():
     message = random.choice(heartbeat_messages)
-    bot.send_message(chat_id=CHAT_ID, text=f"💬 {message}")
+    bot.send_message(chat_id=CHAT_ID, text=f"{message}")
 
 def send_weather():
     try:

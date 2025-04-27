@@ -1,11 +1,16 @@
 from telegram import Bot
-import schedule
 import time
 import random
 import os
 from flask import Flask
 from threading import Thread
 import requests
+import pytz
+from datetime import datetime
+
+
+seoul_tz = pytz.timezone('Asia/Seoul')
+
 
 API_TOKEN = os.environ['API_TOKEN']
 CHAT_ID = int(os.environ['CHAT_ID'])
@@ -85,24 +90,6 @@ def send_weather():
     except Exception as e:
         bot.send_message(chat_id=CHAT_ID, text="Не удалось получить данные о погоде.")
 
-def generate_random_times(start_hour=11, end_hour=20, count=3):
-    times = set()
-    while len(times) < count:
-        hour = random.randint(start_hour, end_hour)
-        minute = random.randint(0, 59)
-        time_str = f"{hour:02d}:{minute:02d}"
-        times.add(time_str)
-    return sorted(times)
-
-schedule.every().day.at("08:00").do(send_morning)
-schedule.every().day.at("22:00").do(send_evening)
-schedule.every().day.at("08:30").do(send_weather)
-schedule.every(2).hours.do(heartbeat_message)
-
-random_times = generate_random_times()
-for t in random_times:
-    schedule.every().day.at(t).do(send_day_message)
-
 app = Flask('')
 
 @app.route('/')
@@ -126,7 +113,23 @@ keep_alive()
 print("Бот Коннор запущен. Ждёт своего часа...")
 
 while True:
-    schedule.run_pending()
+    now = datetime.now(seoul_tz)
+    current_hour = now.hour
+    current_minute = now.minute
+
+    if current_hour == 8 and current_minute == 0:
+        send_morning()
+    elif current_hour == 22 and current_minute == 0:
+        send_evening()
+    elif current_hour == 8 and current_minute == 30:
+        send_weather()
+    elif current_hour % 2 == 0 and current_minute == 15:
+        combined_messages = day_messages + heartbeat_messages
+        send_message(combined_messages)
+  
     time.sleep(30)
+
+
+
 
 

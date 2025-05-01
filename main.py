@@ -116,16 +116,19 @@ while True:
     now = datetime.now(seoul_tz)
     current_hour = now.hour
     current_minute = now.minute
-
-    if current_hour == 8 and current_minute == 0:
-        send_morning()
-    elif current_hour == 22 and current_minute == 0:
-        send_evening()
-    elif current_hour == 8 and current_minute == 30:
-        send_weather()
-    elif current_hour % 2 == 0 and current_minute == 15:
-        combined_messages = day_messages + heartbeat_messages
-        send_message(combined_messages)
+    
+    if current_minute != last_minute:
+        last_minute = current_minute 
+        
+        if current_hour == 8 and current_minute == 0:
+            send_morning() 
+        elif current_hour == 22 and current_minute == 0:
+            send_evening() 
+        elif current_hour == 8 and current_minute == 30: 
+            send_weather() 
+        elif current_hour % 2 == 0 and current_minute == 15: 
+            combined_messages = day_messages + heartbeat_messages 
+            send_message(combined_messages)
   
     time.sleep(30)
 

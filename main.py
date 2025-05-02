@@ -112,6 +112,8 @@ def keep_alive():
 keep_alive()
 print("Бот Коннор запущен. Ждёт своего часа...")
 
+last_minute = -1
+
 while True:
     now = datetime.now(seoul_tz)
     current_hour = now.hour
@@ -130,7 +132,7 @@ while True:
             combined_messages = day_messages + heartbeat_messages 
             send_message(combined_messages)
   
-    time.sleep(30)
+    time.sleep(20)
 
 
 

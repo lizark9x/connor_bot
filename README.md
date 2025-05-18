@@ -15,10 +15,6 @@ schedule
 Flask
 Docker
 Render.com (for deployment)
-🌍 Live Endpoint
-[https://connor-bot-voiceover.onrender.com]
-
-Use / to verify server status. Use /trigger_message to manually trigger a message.
 
 🔧 Environment Variables
 Variable	Description

@@ -1,4 +1,5 @@
 Connor Telegram Bot
+
 A custom Telegram bot designed to simulate emotional support and affection through scheduled and randomized text messages. Originally envisioned as a voice-enhanced bot, this version focuses on clean, stable delivery of written messages via cloud deployment.
 
 💙 Features

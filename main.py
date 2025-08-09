@@ -8,6 +8,18 @@ import requests
 import pytz
 from datetime import datetime, date
 from notion_client import Client as Notion
+from telegram.ext import CommandHandler, Updater
+
+def start(update, context):
+    update.message.reply_text("Привет, Лиза. Я активен.")
+
+def help_command(update, context):
+    update.message.reply_text("Вот список команд, которые я понимаю...")
+
+updater = Updater(API_TOKEN, use_context=True)
+dp = updater.dispatcher
+dp.add_handler(CommandHandler("start", start))
+dp.add_handler(CommandHandler("help", help_command))
 
 # ------------ Timezone
 seoul_tz = pytz.timezone('Asia/Seoul')

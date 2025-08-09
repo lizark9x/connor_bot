@@ -1,7 +1,6 @@
 services:
   - type: web
-    name: connor-liza-bot
-    env: python
-    plan: free
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python main.py"
+    name: connor-bot
+    runtime: docker
+    autoDeploy: true
+  

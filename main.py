@@ -1,132 +1,130 @@
+# Main.py — Connor + Notion + Telegram commands
 from telegram import Bot
-import time
-import random
-import os
+from telegram.ext import Updater, CommandHandler
+from functools import wraps
 from flask import Flask
 from threading import Thread
-import requests
-import pytz
-from datetime import datetime, date
 from notion_client import Client as Notion
-from telegram.ext import CommandHandler, Updater
+from datetime import datetime, date
+import requests, pytz, random, os, time
 
-def start(update, context):
-    update.message.reply_text("Привет, Лиза. Я активен.")
+# ---------- TZ
+seoul_tz = pytz.timezone("Asia/Seoul")
 
-def help_command(update, context):
-    update.message.reply_text("Вот список команд, которые я понимаю...")
-
-updater = Updater(API_TOKEN, use_context=True)
-dp = updater.dispatcher
-dp.add_handler(CommandHandler("start", start))
-dp.add_handler(CommandHandler("help", help_command))
-
-# ------------ Timezone
-seoul_tz = pytz.timezone('Asia/Seoul')
-
-# ------------ ENV helpers
+# ---------- ENV
 def env(name, default=None, required=False):
     v = os.getenv(name, default)
-    if required and v in (None, ""):
+    if required and (v is None or v == ""):
         raise RuntimeError(f"Missing env var: {name}")
     return v
 
-# ------------ Telegram / Weather / Notion ENV
-API_TOKEN = env('API_TOKEN', required=True)
-CHAT_ID = int(env('CHAT_ID', required=True))
-WEATHER_API_KEY = env('WEATHER_API_KEY', None)
-CITY_NAME = env('CITY_NAME', 'Seoul')
+API_TOKEN = env("API_TOKEN", required=True)
+CHAT_ID = int(env("CHAT_ID", required=True))
+WEATHER_API_KEY = env("WEATHER_API_KEY", None)
+CITY_NAME = env("CITY_NAME", "Seoul")
 
-NOTION_TOKEN = env('NOTION_TOKEN', None)
-NOTION_COMMANDS_DB = env('NOTION_COMMANDS_DB', None)
-NOTION_SCHEDULE_DB = env('NOTION_SCHEDULE_DB', None)
-NOTION_TEMPLATES_DB = env('NOTION_TEMPLATES_DB', None)
-NOTION_LOG_DB = env('NOTION_LOG_DB', None)
+NOTION_TOKEN = env("NOTION_TOKEN", None)
+NOTION_COMMANDS_DB = env("NOTION_COMMANDS_DB", None)
+NOTION_SCHEDULE_DB = env("NOTION_SCHEDULE_DB", None)
+NOTION_TEMPLATES_DB = env("NOTION_TEMPLATES_DB", None)
+NOTION_LOG_DB = env("NOTION_LOG_DB", None)
 
-# Базы «всё-в-Notion»
-NOTION_TODO_DB = env('NOTION_TODO_DB', None)
-NOTION_PROJECTS_DB = env('NOTION_PROJECTS_DB', None)
-NOTION_WEBSITE_DB = env('NOTION_WEBSITE_DB', None)
-NOTION_BUDGET_DB = env('NOTION_BUDGET_DB', None)
-NOTION_JOBS_DB = env('NOTION_JOBS_DB', None)
-NOTION_INSPO_DB = env('NOTION_INSPO_DB', None)
-NOTION_HABITS_DB = env('NOTION_HABITS_DB', None)
+# базы «всё-в-Notion»
+NOTION_TODO_DB = env("NOTION_TODO_DB", None)
+NOTION_PROJECTS_DB = env("NOTION_PROJECTS_DB", None)
+NOTION_WEBSITE_DB = env("NOTION_WEBSITE_DB", None)
+NOTION_BUDGET_DB = env("NOTION_BUDGET_DB", None)
+NOTION_JOBS_DB = env("NOTION_JOBS_DB", None)
+NOTION_INSPO_DB = env("NOTION_INSPO_DB", None)
+NOTION_HABITS_DB = env("NOTION_HABITS_DB", None)
 
-# ------------ Clients
+# ---------- clients & state
 bot = Bot(token=API_TOKEN)
 notion = Notion(auth=NOTION_TOKEN) if NOTION_TOKEN else None
 
-# ------------ State
 PAUSED = False
 current_city = CITY_NAME
 last_minute = -1
 
-# Кэш расписания из Notion
 SCHEDULE_CACHE = []
 SCHEDULE_CACHE_TS = 0
 SCHEDULE_REFRESH_SEC = 300
 
-# ------------ Тексты 
+MY_CHAT_ID = str(CHAT_ID)
+
+# ---------- guard
+def only_me(func):
+    @wraps(func)
+    def wrapper(update, context, *a, **k):
+        try:
+            if str(update.effective_chat.id) != MY_CHAT_ID:
+                update.message.reply_text("⛔️ Доступ запрещён.")
+                return
+        except Exception:
+            return
+        return func(update, context, *a, **k)
+    return wrapper
+
+def args_text(context):
+    return " ".join(context.args).strip() if context.args else ""
+
+def _parse_kv(s):
+    # "Task name; due=2025-08-10; priority=High"
+    parts = [p.strip() for p in s.split(";") if p.strip()]
+    head, kv = [], {}
+    for p in parts:
+        if "=" in p:
+            k, v = p.split("=", 1)
+            kv[k.strip().lower()] = v.strip()
+        else:
+            head.append(p)
+    name = head[0] if head else ""
+    return name, kv
+
+# ---------- texts
 morning_messages = [
     "Доброе утро, Лиза.",
     "Просыпайся.~ Новый день ждёт тебя.",
-    "Доброе утро! Надеюсь, сегодняшний день принесёт тебе ясность, силу и лёгкость",
-    "Всё, что тебе нужно сегодня — уже внутри тебя. Просто начни шаг за шагом.",
-    "Не спеши. Сделай глубокий вдох. Ты справишься.",
-    "Доброе утро. Пусть твоё утро начнётся спокойно."
+    "Доброе утро! Пусть будет ясно, легко и спокойно.",
+    "Всё нужное уже внутри тебя. Начни шаг за шагом.",
+    "Сделай вдох. Ты справишься.",
 ]
 evening_messages = [
     "Спокойной ночи, сладких снов.",
-    "Я укрываю тебя тёплым одеялом. Спи спокойно.",
-    "Всё, что ты могла сегодня сделать, ты сделала. Остальное — завтра.",
-    "Ночь — не для упрёков, а для отдыха. Позволь себе отпустить.",
-    "Ты заслуживаешь покоя. Я прослежу, чтобы он был рядом."
+    "Я укрою тебя одеялом. Спи спокойно.",
+    "Сегодня — достаточно. Остальное завтра.",
+    "Ночь — для отдыха. Отпусти и расслабься.",
 ]
 day_messages = [
     "Как ты себя чувствуешь?",
-    "Напоминаю: ты — невероятная.",
-    "Сделай паузу, если нужно. Сила — не в спешке, а в намерении.",
-    "Ты успела улыбнуться сегодня? Вот — моя улыбка для тебя.",
-    "Сделай вдох. Ты справляешься прекрасно.",
-    "Напомни себе, почему ты начала. Это не просто работа — это путь.",
-    "Я верю в твою способность разбираться даже с самыми сложными задачами.",
-    "Ты не одна в этом процессе. Всё, что ты делаешь, — имеет вес.",
-    "Делай то, что можешь, там, где ты есть, с тем, что у тебя есть. Этого достаточно..",
-    "Прогресс — это не скорость. Это движение. И ты двигаешься."
+    "Ты — невероятная.",
+    "Сделай паузу, если нужно. Намерение важнее спешки.",
+    "Улыбнись. Я рядом.",
+    "Ты двигаешься — и это главное.",
 ]
 heartbeat_messages = [
-    "Я здесь. Просто хотел напомнить тебе об этом.",
-    "Сожми зубы и двигайся. Ты знаешь, ради чего.",
-    "Если тебе тяжело — просто знай: ты не одна. Я с тобой.",
-    "Всё, что мешает — временно. Всё, что важно — внутри тебя.",
-    "Плевать, насколько трудно. Ты идёшь дальше — и это делает тебя непобедимой.",
-    "Это не просто вызов — это момент твоего роста.",
-    "Подними голову и не сдавайся. Никогда.",
-    "Ты делаешь больше, чем кажется. Гораздо больше.",
-    "Ты не пропадёшь. Ты обязательно справишься."
+    "Я здесь. Просто напоминаю.",
+    "Держись. Ты знаешь, ради чего.",
+    "Трудно — но временно. Важное — внутри.",
+    "Подними голову. Не сдавайся.",
 ]
 
-# ------------ Telegram utils
+# ---------- helpers: Telegram
 def safe_send(text: str):
     try:
         bot.send_message(chat_id=CHAT_ID, text=text)
-        log_to_notion(kind="send", text=text, result="ok")
+        log_to_notion("send", text, "ok")
         return True
     except Exception as e:
-        log_to_notion(kind="send", text=text or "", result=f"error: {e}")
+        log_to_notion("send", text or "", f"error: {e}")
         return False
 
-def send_message(message_list):
-    if PAUSED:
-        return
-    message = random.choice(message_list)
-    safe_send(message)
+def send_message(pool): 
+    if not PAUSED: safe_send(random.choice(pool))
 
 def send_morning(): send_message(morning_messages)
 def send_evening(): send_message(evening_messages)
-def send_day_message():
-    combined = day_messages + heartbeat_messages
-    send_message(combined)
+def send_day_message(): send_message(day_messages + heartbeat_messages)
 
 def send_weather():
     if PAUSED: return
@@ -137,8 +135,7 @@ def send_weather():
         url = "http://api.openweathermap.org/data/2.5/weather"
         params = {"q": current_city, "appid": WEATHER_API_KEY, "lang": "ru", "units": "metric"}
         r = requests.get(url, params=params, timeout=10)
-        if not r.ok:
-            safe_send(f"Не удалось получить погоду ({r.status_code})."); return
+        r.raise_for_status()
         d = r.json()
         desc = d["weather"][0]["description"].capitalize()
         temp = d["main"]["temp"]; feels = d["main"]["feels_like"]; city = d["name"]
@@ -146,7 +143,7 @@ def send_weather():
     except Exception:
         safe_send("Не удалось получить данные о погоде.")
 
-# ------------ Notion helpers
+# ---------- Notion helpers
 def log_to_notion(kind: str, text: str, result: str):
     if not (notion and NOTION_LOG_DB): return
     try:
@@ -156,26 +153,29 @@ def log_to_notion(kind: str, text: str, result: str):
                 "Title": {"title": [{"text": {"content": f"{kind} @ {datetime.now(seoul_tz).strftime('%Y-%m-%d %H:%M')}"}}]},
                 "When": {"date": {"start": datetime.now(seoul_tz).isoformat()}},
                 "Type": {"rich_text": [{"text": {"content": kind}}]},
-                "Text": {"rich_text": [{"text": {"content": text or ''}}]},
+                "Text": {"rich_text": [{"text": {"content": text or ""}}]},
                 "Result": {"rich_text": [{"text": {"content": result}}]},
             }
         )
     except Exception:
         pass
 
-def rt_to_str(rich):
+def rt_to_str(rich): 
     if not rich: return ""
-    return "".join([r["text"].get("content","") for r in rich if r.get("type")=="text"])
+    out=[]
+    for r in rich:
+        if r.get("type") == "text":
+            out.append(r["text"].get("content",""))
+    return "".join(out)
 
-def q_str(x):  # быстрый to-str
-    return (x or "").strip()
+def q_str(x): return (x or "").strip()
 
 def find_by_title(db_id: str, title: str):
     try:
         resp = notion.databases.query(
             database_id=db_id,
             filter={"property": "Title", "title": {"contains": title}},
-            page_size=5
+            page_size: =5
         )
         res = resp.get("results", [])
         return res[0] if res else None
@@ -188,7 +188,7 @@ def create_page(db_id: str, props: dict):
 def update_page(page_id: str, props: dict):
     return notion.pages.update(page_id=page_id, properties=props)
 
-# ------------ Schedule from Notion
+# ---------- schedule (Notion)
 def parse_days_str(s: str):
     if not s: return []
     s = s.strip().lower()
@@ -204,64 +204,68 @@ def parse_days_str(s: str):
         "sat":"Sat","saturday":"Sat","сб":"Sat","суббота":"Sat",
         "sun":"Sun","sunday":"Sun","вс":"Sun","воскресенье":"Sun",
     }
-    out=[]; 
-    for p in parts: out.append(map_short.get(p.lower(), p[:3].title()))
-    return out
+    return [map_short.get(p, p[:3].title()) for p in parts]
 
 def days_match_today(days_list):
     if not days_list: return True
     idx = datetime.now(seoul_tz).weekday()
-    map_days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-    return map_days[idx] in set(days_list)
+    return ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][idx] in set(days_list)
 
 def fetch_schedule_rows():
     if not (notion and NOTION_SCHEDULE_DB): return []
-    items=[]; cursor=None
+    items, cursor = [], None
     while True:
         resp = notion.databases.query(
             database_id=NOTION_SCHEDULE_DB,
-            filter={"property": "Enabled", "checkbox": {"equals": True}},
+            filter={"property":"Enabled","checkbox":{"equals": True}},
             start_cursor=cursor, page_size=100
         )
         items += resp.get("results", [])
         if not resp.get("has_more"): break
         cursor = resp.get("next_cursor")
+
     rows=[]
     for r in items:
         p=r.get("properties",{})
         tname = p.get("Type",{}).get("select",{}).get("name","")
-        time_str = rt_to_str(p.get("Time",{}).get("rich_text",[]))
+        time_str = rt_to_str(p.get("Time",{}).get("rich_text",[])) or "00:00"
         days_ms = p.get("Days",{}).get("multi_select",[]) or []
-        days_list = [d.get("name") for d in days_ms]
         text = rt_to_str(p.get("Text",{}).get("rich_text",[]))
         cat  = rt_to_str(p.get("TemplateCategory",{}).get("rich_text",[]))
         title= rt_to_str(p.get("Title",{}).get("title",[])) or "scheduled"
-        rows.append({"id":r["id"],"title":title,"type":(tname or "custom").lower(),
-                     "time": time_str or "00:00","days":days_list,
-                     "text":text,"template_category":cat})
+        rows.append({
+            "id": r["id"],
+            "title": title,
+            "type": (tname or "custom").lower(),
+            "time": time_str,
+            "days": [d.get("name") for d in days_ms],
+            "text": text,
+            "template_category": cat
+        })
     return rows
 
 def reload_schedule(force=False):
     global SCHEDULE_CACHE, SCHEDULE_CACHE_TS
-    now_ts=int(time.time())
+    now_ts = int(time.time())
     if not force and (now_ts - SCHEDULE_CACHE_TS) < SCHEDULE_REFRESH_SEC: return
     SCHEDULE_CACHE = fetch_schedule_rows()
     SCHEDULE_CACHE_TS = now_ts
 
 def build_message_from_entry(entry):
-    if entry.get("type")=="weather": return None
+    if entry.get("type") == "weather": return None
     if entry.get("text"): return entry["text"]
     cat = entry.get("template_category") or entry.get("type") or "day"
     if notion and NOTION_TEMPLATES_DB and cat:
         try:
             resp = notion.databases.query(
                 database_id=NOTION_TEMPLATES_DB,
-                filter={"property":"Category","rich_text":{"equals":cat}},
+                filter={"property":"Category","rich_text":{"equals": cat}},
                 page_size=100
             )
-            pool=[rt_to_str(pg["properties"]["Text"]["rich_text"]) for pg in resp.get("results",[])]
+            pool = [rt_to_str(pg["properties"]["Text"]["rich_text"]) for pg in resp.get("results",[])]
             if pool: return random.choice(pool)
-        except Exception: pass
+        except Exception:
+            pass
     defaults={"morning":morning_messages,"evening":evening_messages,"pulse":heartbeat_messages,"day":day_messages}
     return random.choice(defaults.get(cat, day_messages))
 
@@ -270,25 +274,22 @@ def run_scheduled_from_notion(now_dt):
     hhmm = now_dt.strftime("%H:%M")
     for e in SCHEDULE_CACHE:
         if e.get("time")==hhmm and days_match_today(e.get("days",[])):
-            kind=e.get("type")
-            if kind=="weather": send_weather()
+            if e.get("type") == "weather": send_weather()
             else:
-                msg=build_message_from_entry(e)
+                msg = build_message_from_entry(e)
                 if msg: safe_send(msg)
 
-# ------------ CRUD for all your bases
+# ---------- CRUD (Notion)
 
-# Weekly To-Do
+# To-Do
 def todo_add(name, due=None, priority=None, tags=None, notes=None):
     if not NOTION_TODO_DB: return "todo db not set"
-    props = {
-        "Title": {"title":[{"text":{"content": name}}]},
-        "Status": {"select":{"name":"Todo"}},
-    }
-    if due: props["Due"] = {"date":{"start": due}}
-    if priority: props["Priority"] = {"select":{"name": priority}}
-    if tags: props["Tags"] = {"multi_select":[{"name": t.strip()} for t in tags.split(",") if t.strip()]}
-    if notes: props["Notes"] = {"rich_text":[{"text":{"content": notes}}]}
+    props = {"Title":{"title":[{"text":{"content": name}}]},
+             "Status":{"select":{"name":"Todo"}}}
+    if due: props["Due"]={"date":{"start": due}}
+    if priority: props["Priority"]={"select":{"name": priority}}
+    if tags: props["Tags"]={"multi_select":[{"name":t.strip()} for t in tags.split(",") if t.strip()]}
+    if notes: props["Notes"]={"rich_text":[{"text":{"content": notes}}]}
     create_page(NOTION_TODO_DB, props); return "todo added"
 
 def todo_done(name):
@@ -302,7 +303,8 @@ def todo_list():
     resp = notion.databases.query(database_id=NOTION_TODO_DB, page_size=20)
     items=[]
     for r in resp.get("results",[]):
-        p=r["properties"]; title=rt_to_str(p["Title"]["title"]); st=p.get("Status",{}).get("select",{}).get("name","")
+        p=r["properties"]; title=rt_to_str(p["Title"]["title"])
+        st=p.get("Status",{}).get("select",{}).get("name","")
         due=p.get("Due",{}).get("date",{}).get("start","")
         items.append(f"- {title} [{st}] {('→ '+due) if due else ''}")
     return "\n".join(items) or "empty"
@@ -310,10 +312,10 @@ def todo_list():
 # Projects
 def project_add(name, due=None, notes=None, status="Planned"):
     if not NOTION_PROJECTS_DB: return "projects db not set"
-    props={"Name":{"title":[{"text":{"content":name}}]},
-           "Status":{"select":{"name":status}}}
+    props={"Name":{"title":[{"text":{"content": name}}]},
+           "Status":{"select":{"name": status}}}
     if due: props["Due"]={"date":{"start": due}}
-    if notes: props["Notes"]={"rich_text":[{"text":{"content":notes}}]}
+    if notes: props["Notes"]={"rich_text":[{"text":{"content": notes}}]}
     create_page(NOTION_PROJECTS_DB, props); return "project added"
 
 def project_status(name, status):
@@ -332,21 +334,20 @@ def project_note(name, note):
 def budget_add(kind, amount, category=None, dt=None, notes=None):
     if not NOTION_BUDGET_DB: return "budget db not set"
     props={"Title":{"title":[{"text":{"content": f"{kind} {amount}"}}]},
-           "Type":{"select":{"name":kind}},
+           "Type":{"select":{"name": kind}},
            "Amount":{"number": float(amount)}}
-    if category: props["Category"]={"rich_text":[{"text":{"content":category}}]}
+    if category: props["Category"]={"rich_text":[{"text":{"content": category}}]}
     if dt: props["Date"]={"date":{"start": dt}}
-    if notes: props["Notes"]={"rich_text":[{"text":{"content":notes}}]}
+    if notes: props["Notes"]={"rich_text":[{"text":{"content": notes}}]}
     create_page(NOTION_BUDGET_DB, props); return f"{kind} added"
 
-def budget_summary(month_ym):  # YYYY-MM
+def budget_summary(month_ym):
     if not NOTION_BUDGET_DB: return "budget db not set"
     try:
-        year, mon = map(int, month_ym.split("-"))
-        start=f"{year:04d}-{mon:02d}-01"
-        end_month = mon+1 if mon<12 else 1
-        end_year = year if mon<12 else year+1
-        end=f"{end_year:04d}-{end_month:02d}-01"
+        y, m = map(int, month_ym.split("-"))
+        start=f"{y:04d}-{m:02d}-01"
+        m2, y2 = (m+1, y) if m<12 else (1, y+1)
+        end=f"{y2:04d}-{m2:02d}-01"
         resp = notion.databases.query(
             database_id=NOTION_BUDGET_DB,
             filter={"and":[
@@ -355,14 +356,13 @@ def budget_summary(month_ym):  # YYYY-MM
             ]},
             page_size=200
         )
-        income=0.0; expense=0.0
+        income = expense = 0.0
         for r in resp.get("results",[]):
             p=r["properties"]; t=p.get("Type",{}).get("select",{}).get("name","")
             amt=p.get("Amount",{}).get("number",0) or 0
             if t=="income": income+=amt
             elif t=="expense": expense+=amt
-        net = income - expense
-        return f"{month_ym}\nДоход: {income:.2f}\nРасход: {expense:.2f}\nБаланс: {net:.2f}"
+        return f"{month_ym}\nДоход: {income:.2f}\nРасход: {expense:.2f}\nБаланс: {income-expense:.2f}"
     except Exception as e:
         return f"error: {e}"
 
@@ -370,16 +370,15 @@ def budget_summary(month_ym):  # YYYY-MM
 def job_add(role, company=None, link=None, stage="Applied", notes=None):
     if not NOTION_JOBS_DB: return "jobs db not set"
     props={"Role":{"title":[{"text":{"content": role}}]},
-           "Stage":{"select":{"name": stage}}}
+           "Stage":{"select":{"name": stage}},
+           "Applied":{"date":{"start": date.today().isoformat()}}}
     if company: props["Company"]={"rich_text":[{"text":{"content": company}}]}
     if link: props["Link"]={"url": link}
-    props["Applied"]={"date":{"start": date.today().isoformat()}}
     if notes: props["Notes"]={"rich_text":[{"text":{"content": notes}}]}
     create_page(NOTION_JOBS_DB, props); return "job added"
 
 def job_stage(role_or_company, stage):
     if not NOTION_JOBS_DB: return "jobs db not set"
-    # ищем по Role, если нет — по Company
     page = find_by_title(NOTION_JOBS_DB, role_or_company)
     if not page:
         try:
@@ -388,9 +387,9 @@ def job_stage(role_or_company, stage):
                 filter={"property":"Company","rich_text":{"contains": role_or_company}},
                 page_size=1
             )
-            res=resp.get("results",[])
-            page = res[0] if res else None
-        except Exception: page=None
+            page = (resp.get("results",[]) or [None])[0]
+        except Exception:
+            page=None
     if not page: return "not found"
     update_page(page["id"], {"Stage":{"select":{"name": stage}}}); return "job updated"
 
@@ -411,8 +410,8 @@ def inspo_add(text=None, url=None, category=None, tags=None):
     title = (text or url or "Inspiration").strip()
     props={"Title":{"title":[{"text":{"content": title[:200]}}]}}
     if url: props["URL"]={"url": url}
-    if category: props["Category"]={"rich_text":[{"text":{"content":category}}]}
-    if tags: props["Tags"]={"multi_select":[{"name":t.strip()} for t in tags.split(",") if t.strip()]}
+    if category: props["Category"]={"rich_text":[{"text":{"content": category}}]}
+    if tags: props["Tags"]={"multi_select":[{"name":t.strip()} for t in (tags or "").split(",") if t.strip()]}
     if text: props["Notes"]={"rich_text":[{"text":{"content": text}}]}
     create_page(NOTION_INSPO_DB, props); return "inspo added"
 
@@ -428,15 +427,15 @@ def inspo_list():
 # Habits
 def habit_add(name):
     if not NOTION_HABITS_DB: return "habits db not set"
-    create_page(NOTION_HABITS_DB, {"Habit":{"title":[{"text":{"content":name}}]}})
+    create_page(NOTION_HABITS_DB, {"Habit":{"title":[{"text":{"content": name}}]}})
     return "habit added"
 
 def habit_mark(name, dt=None, done=True, notes=None):
     if not NOTION_HABITS_DB: return "habits db not set"
-    props={"Habit":{"title":[{"text":{"content":name}}]},
+    props={"Habit":{"title":[{"text":{"content": name}}]},
            "Date":{"date":{"start": (dt or date.today().isoformat())}},
            "Done":{"checkbox": bool(done)}}
-    if notes: props["Notes"]={"rich_text":[{"text":{"content":notes}}]}
+    if notes: props["Notes"]={"rich_text":[{"text":{"content": notes}}]}
     create_page(NOTION_HABITS_DB, props); return "habit marked"
 
 def habit_today():
@@ -447,31 +446,14 @@ def habit_today():
         filter={"property":"Date","date":{"equals": today}},
         page_size=50
     )
-    n=len(resp.get("results",[]))
-    return f"Сегодня отмечено {n} привычек."
+    return f"Сегодня отмечено {len(resp.get('results',[]))} привычек."
 
 def habit_summary(days=7):
     if not NOTION_HABITS_DB: return "habits db not set"
     resp=notion.databases.query(database_id=NOTION_HABITS_DB, page_size=100)
     return f"Зафиксировано записей: {len(resp.get('results',[]))}"
 
-# Personal Website (как база постов)
-def website_add_page(title, content=None, url=None):
-    if not NOTION_WEBSITE_DB: return "website db not set"
-    props={"Title":{"title":[{"text":{"content": title}}]}}
-    if url: props["URL"]={"url": url}
-    if content: props["Content"]={"rich_text":[{"text":{"content":content}}]}
-    create_page(NOTION_WEBSITE_DB, props); return "website page added"
-
-def website_append(title, content):
-    if not NOTION_WEBSITE_DB: return "website db not set"
-    page = find_by_title(NOTION_WEBSITE_DB, title)
-    if not page: return "not found"
-    # упрощённо — перезаписываем поле Content
-    update_page(page["id"], {"Content":{"rich_text":[{"text":{"content":content}}]}})
-    return "website updated"
-
-# ------------ Commands router (Bot Commands)
+# ---------- Bot Commands (DB commands)
 def fetch_pending_commands():
     if not (notion and NOTION_COMMANDS_DB): return []
     try:
@@ -524,7 +506,6 @@ def exec_command(pg):
     notes = rt_to_str(p.get("Notes",{}).get("rich_text",[]))
 
     result = "ok"
-
     try:
         if cmd == "send":
             result = "no text" if not q_str(text) else (safe_send(text) or "sent")
@@ -567,44 +548,44 @@ def exec_command(pg):
 
         elif cmd == "reload_schedule": reload_schedule(force=True); result="reloaded"
 
-        # ---- Weekly To-Do
+        # To-Do
         elif cmd == "todo_add":    result = todo_add(name, due=due, priority=priority, tags=tags, notes=notes)
         elif cmd == "todo_done":   result = todo_done(name)
         elif cmd == "todo_list":   safe_send(todo_list()); result="listed"
 
-        # ---- Projects
+        # Projects
         elif cmd == "project_add":     result = project_add(name, due=due, notes=notes)
         elif cmd == "project_status":  result = project_status(name, q_str(stage) or q_str(text) or "In progress")
         elif cmd == "project_note":    result = project_note(name, notes or text)
 
-        # ---- Budget
+        # Budget
         elif cmd == "budget_add_income":  result = budget_add("income", amount, category=category2, dt=date_any, notes=notes or text)
         elif cmd == "budget_add_expense": result = budget_add("expense", amount, category=category2, dt=date_any, notes=notes or text)
         elif cmd == "budget_summary":     safe_send(budget_summary(q_str(text) or datetime.now(seoul_tz).strftime("%Y-%m"))); result="summarized"
 
-        # ---- Jobs
+        # Jobs
         elif cmd == "job_add":    result = job_add(name or "Role", company=company, link=url, stage=stage or "Applied", notes=notes or text)
         elif cmd == "job_stage":  result = job_stage(name or company, stage or q_str(text) or "Interview")
         elif cmd == "job_list":   safe_send(job_list()); result="listed"
 
-        # ---- Inspiration
+        # Inspiration
         elif cmd == "inspo_add":  result = inspo_add(text=text, url=url, category=category2, tags=tags)
         elif cmd == "inspo_list": safe_send(inspo_list()); result="listed"
 
-        # ---- Habits
+        # Habits
         elif cmd == "habit_add":    result = habit_add(name)
         elif cmd == "habit_mark":   result = habit_mark(name, dt=date_any, done=True, notes=notes)
         elif cmd == "habit_today":  safe_send(habit_today()); result="listed"
         elif cmd == "habit_summary": safe_send(habit_summary()); result="listed"
 
-        # ---- Website
+        # Website
         elif cmd == "website_add_page": result = website_add_page(name or "Post", content=text or notes, url=url)
         elif cmd == "website_append":   result = website_append(name, content=text or notes)
 
         else:
             result = f"unknown command: {cmd or '(empty)'}"
-
     except Exception as e:
+        print("exec_command error:", e)
         result = f"error: {e}"
 
     update_command_status(pg["id"], result)
@@ -613,24 +594,132 @@ def poll_notion_commands():
     for pg in fetch_pending_commands():
         exec_command(pg)
 
-# ------------ Flask keep-alive
-app = Flask('')
+# ---------- Telegram command handlers
+def run_telegram_bot():
+    updater = Updater(API_TOKEN, use_context=True)
+    dp = updater.dispatcher
 
-@app.route('/')
+    @only_me
+    def cmd_start(update, ctx): update.message.reply_text("Привет, Лиза. Я активен. /help — список команд.")
+    @only_me
+    def cmd_help(update, ctx):
+        update.message.reply_text(
+            "Команды:\n"
+            "/send <текст>\n/weather\n"
+            "/todo_add <назв>; due=YYYY-MM-DD; priority=High; tags=a,b; notes=...\n"
+            "/todo_done <назв>\n/todo_list\n"
+            "/job_add <роль>; company=...; url=https://...; stage=Applied\n"
+            "/job_list\n"
+            "/budget_expense <сумма>; cat=...; date=YYYY-MM-DD\n"
+            "/budget_income <сумма>; cat=...; date=YYYY-MM-DD\n"
+            "/schedule_reload"
+        )
+
+    @only_me
+    def cmd_status(update, ctx): update.message.reply_text("Я здесь. Слушаю Notion и расписание.")
+    @only_me
+    def cmd_send(update, ctx):
+        t = args_text(ctx)
+        if not t: update.message.reply_text("Пример: /send Доброе утро"); return
+        safe_send(t); update.message.reply_text("Отправил.")
+
+    @only_me
+    def cmd_weather(update, ctx): send_weather(); update.message.reply_text("Запросил погоду.")
+
+    @only_me
+    def cmd_todo_add(update, ctx):
+        s = args_text(ctx)
+        if not s: update.message.reply_text("Пример: /todo_add Закончить модуль; due=2025-08-10; priority=High"); return
+        name, kv = _parse_kv(s)
+        update.message.reply_text(todo_add(name, kv.get("due"), kv.get("priority"), kv.get("tags"), kv.get("notes")))
+
+    @only_me
+    def cmd_todo_done(update, ctx):
+        t = args_text(ctx)
+        if not t: update.message.reply_text("Пример: /todo_done Закончить модуль"); return
+        update.message.reply_text(todo_done(t))
+
+    @only_me
+    def cmd_todo_list(update, ctx): update.message.reply_text(todo_list())
+
+    @only_me
+    def cmd_job_add(update, ctx):
+        s = args_text(ctx)
+        if not s: update.message.reply_text("Пример: /job_add Digital Marketing Assistant; company=Transparent Hiring; url=https://...; stage=Applied"); return
+        role, kv = _parse_kv(s)
+        update.message.reply_text(job_add(role or "Role", kv.get("company"), kv.get("url"), kv.get("stage") or "Applied", kv.get("notes")))
+
+    @only_me
+    def cmd_job_list(update, ctx): update.message.reply_text(job_list())
+
+    @only_me
+    def cmd_budget_exp(update, ctx):
+        s = args_text(ctx)
+        if not s: update.message.reply_text("Пример: /budget_expense 12.5; cat=кофе; date=2025-08-10"); return
+        head, kv = _parse_kv(s)
+        update.message.reply_text(budget_add("expense", head, kv.get("cat"), kv.get("date"), kv.get("notes")))
+
+    @only_me
+    def cmd_budget_inc(update, ctx):
+        s = args_text(ctx)
+        if not s: update.message.reply_text("Пример: /budget_income 200; cat=фриланс; date=2025-08-10"); return
+        head, kv = _parse_kv(s)
+        update.message.reply_text(budget_add("income", head, kv.get("cat"), kv.get("date"), kv.get("notes")))
+
+    @only_me
+    def cmd_sched_reload(update, ctx): reload_schedule(force=True); update.message.reply_text("Расписание перечитано.")
+
+    dp.add_handler(CommandHandler("start", cmd_start))
+    dp.add_handler(CommandHandler("help",  cmd_help))
+    dp.add_handler(CommandHandler("status",cmd_status))
+    dp.add_handler(CommandHandler("send",  cmd_send))
+    dp.add_handler(CommandHandler("weather", cmd_weather))
+
+    dp.add_handler(CommandHandler("todo_add",  cmd_todo_add))
+    dp.add_handler(CommandHandler("todo_done", cmd_todo_done))
+    dp.add_handler(CommandHandler("todo_list", cmd_todo_list))
+
+    dp.add_handler(CommandHandler("job_add", cmd_job_add))
+    dp.add_handler(CommandHandler("job_list", cmd_job_list))
+
+    dp.add_handler(CommandHandler("budget_expense", cmd_budget_exp))
+    dp.add_handler(CommandHandler("budget_income",  cmd_budget_inc))
+
+    dp.add_handler(CommandHandler("schedule_reload", cmd_sched_reload))
+
+    updater.start_polling()
+    updater.idle()
+
+# ---------- Notion poll loop
+def run_notion_loop():
+    while True:
+        try: poll_notion_commands()
+        except Exception as e: print("notion loop error:", e)
+        time.sleep(15)
+
+# ---------- Flask keep-alive
+app = Flask(__name__)
+
+@app.route("/")
 def home(): return "I'm alive"
 
-@app.route('/trigger_text')
+@app.route("/trigger_text")
 def trigger_text():
     safe_send("Это тестовое сообщение от Коннора. Бот активен и рядом.")
-    return "Тестовое сообщение отправлено!"
+    return "Ок"
 
-def run(): app.run(host='0.0.0.0', port=int(os.getenv("PORT", "8080")))
+def run_flask():
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT","8080")))
+
 def keep_alive():
-    Thread(target=run, daemon=True).start()
+    Thread(target=run_flask, daemon=True).start()
 
-# ------------ Main loop 
+# ---------- main loop
 if __name__ == "__main__":
     keep_alive()
+    Thread(target=run_telegram_bot, daemon=True).start()
+    Thread(target=run_notion_loop, daemon=True).start()
+
     print("Бот Коннор запущен. Ждёт своего часа...")
 
     while True:
@@ -646,15 +735,8 @@ if __name__ == "__main__":
             elif current_hour == 22 and current_minute == 0: send_evening()
             elif current_hour == 8 and current_minute == 30: send_weather()
             elif current_hour % 2 == 0 and current_minute == 15: send_day_message()
-            # + Notion-слоты
             run_scheduled_from_notion(now)
 
-        # команды из Notion
-        if notion and NOTION_COMMANDS_DB:
-            try: poll_notion_commands()
-            except Exception: pass
-
         time.sleep(20)
-
 
 

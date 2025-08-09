@@ -175,7 +175,7 @@ def find_by_title(db_id: str, title: str):
         resp = notion.databases.query(
             database_id=db_id,
             filter={"property": "Title", "title": {"contains": title}},
-            page_size: =5
+            page_size=5
         )
         res = resp.get("results", [])
         return res[0] if res else None
